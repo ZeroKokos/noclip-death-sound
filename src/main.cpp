@@ -7,15 +7,31 @@
 //   touched a hazard but is still alive, that is a "noclip death" -> play a sound.
 //   Contact lasts many physics ticks, so only the first tick of each contact
 //   triggers the sound.
+//
+// Custom sound: drag any audio file (mp3, ogg, wav, flac...) onto the game
+// window. It is copied into the mod's config folder and used as the death sound.
 
 #include <Geode/Geode.hpp>
+#include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/ui/GeodeUI.hpp>
+#include <Geode/ui/Notification.hpp>
 
 #include <mh/mh.hpp>
 
+#include <algorithm>
+#include <cwctype>
 #include <filesystem>
 #include <string>
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
 
 using namespace geode::prelude;
 
@@ -30,9 +46,19 @@ namespace cfg {
     static double contactGap()     { return Mod::get()->getSettingValue<double>("contact-gap"); }
     static bool player1()          { return Mod::get()->getSettingValue<bool>("player-1"); }
     static bool player2()          { return Mod::get()->getSettingValue<bool>("player-2"); }
+    static bool dragDrop()         { return Mod::get()->getSettingValue<bool>("drag-drop"); }
     static std::filesystem::path soundFile() {
         return Mod::get()->getSettingValue<std::filesystem::path>("sound-file");
     }
+    static void setSoundFile(std::filesystem::path const& p) {
+        Mod::get()->setSettingValue<std::filesystem::path>("sound-file", p);
+    }
+}
+
+// UTF-8 string (Mega Hack textbox) -> path. std::filesystem::path(std::string)
+// would use the ANSI code page on Windows and break Cyrillic paths.
+static std::filesystem::path pathFromUtf8(std::string const& s) {
+    return std::filesystem::path(utils::string::utf8ToWide(s));
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +84,17 @@ namespace sound {
             g_sound = nullptr;
         }
         g_loadedPath.clear();
+    }
+
+    // Checks that FMOD can decode the file (used before accepting a dropped file)
+    static bool canDecode(std::filesystem::path const& file) {
+        auto engine = FMODAudioEngine::sharedEngine();
+        if (!engine || !engine->m_system) return false;
+        FMOD::Sound* test = nullptr;
+        auto res = engine->m_system->createSound(
+            utils::string::pathToString(file).c_str(), FMOD_CREATESTREAM, nullptr, &test);
+        if (test) test->release();
+        return res == FMOD_OK;
     }
 
     static void play() {
@@ -90,6 +127,122 @@ namespace sound {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Drag & drop an audio file onto the game window
+// ---------------------------------------------------------------------------
+namespace drop {
+    static HWND g_hwnd = nullptr;
+    static WNDPROC g_prevProc = nullptr;
+
+    static bool isAudioExt(std::filesystem::path const& p) {
+        auto ext = p.extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return std::towlower(c); });
+        static constexpr wchar_t const* known[] = {
+            L".mp3", L".ogg", L".oga", L".wav", L".flac", L".aif", L".aiff",
+            L".wma", L".mp2", L".opus", L".m4a", L".aac", L".mod", L".xm", L".it", L".s3m",
+        };
+        for (auto k : known) if (ext == k) return true;
+        return false;
+    }
+
+    static void notify(std::string const& text, NotificationIcon icon) {
+        Notification::create(text, icon, 2.5f)->show();
+    }
+
+    // Copies the file into the config folder (so it keeps working if the
+    // original is moved or deleted) and makes it the death sound.
+    static void applyFile(std::filesystem::path const& src) {
+        std::error_code ec;
+        sound::release();
+        auto dir = Mod::get()->getConfigDir();
+        // remove the previous custom sound(s)
+        for (auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            if (entry.path().stem() == L"custom_death_sound") std::filesystem::remove(entry.path(), ec);
+        }
+
+        auto ext = src.extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return std::towlower(c); });
+        auto dst = dir / (L"custom_death_sound" + ext);
+
+        ec.clear();
+        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            log::error("Failed to copy '{}': {}", utils::string::pathToString(src), ec.message());
+            notify("Could not copy the sound file", NotificationIcon::Error);
+            return;
+        }
+        if (!sound::canDecode(dst)) {
+            std::filesystem::remove(dst, ec);
+            notify("This audio format is not supported", NotificationIcon::Error);
+            return;
+        }
+
+        cfg::setSoundFile(dst);
+        sound::release();
+        log::info("Custom death sound set from '{}'", utils::string::pathToString(src));
+        notify("Death sound: " + utils::string::pathToString(src.filename()), NotificationIcon::Success);
+        sound::play(); // preview
+    }
+
+    static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+        if (msg == WM_DROPFILES && cfg::dragDrop()) {
+            auto hdrop = reinterpret_cast<HDROP>(wp);
+            UINT count = DragQueryFileW(hdrop, 0xFFFFFFFF, nullptr, 0);
+            for (UINT i = 0; i < count; ++i) {
+                UINT len = DragQueryFileW(hdrop, i, nullptr, 0);
+                std::wstring buf(len + 1, L'\0');
+                DragQueryFileW(hdrop, i, buf.data(), len + 1);
+                buf.resize(len);
+                std::filesystem::path file(buf);
+                if (isAudioExt(file)) {
+                    // Audio file: it's ours. Take the first one and finish the drop.
+                    DragFinish(hdrop);
+                    applyFile(file);
+                    return 0;
+                }
+            }
+            // Not audio: let the game / other mods handle it
+        }
+        return CallWindowProcW(g_prevProc, hwnd, msg, wp, lp);
+    }
+
+    static BOOL CALLBACK findWindow(HWND hwnd, LPARAM out) {
+        wchar_t cls[64] = {};
+        GetClassNameW(hwnd, cls, 64);
+        if (std::wstring_view(cls).starts_with(L"GLFW") && IsWindowVisible(hwnd)) {
+            *reinterpret_cast<HWND*>(out) = hwnd;
+            return FALSE;
+        }
+        return TRUE;
+    }
+
+    // Called on the main thread; re-installs if the game recreated its window.
+    static void install() {
+        HWND hwnd = nullptr;
+        EnumThreadWindows(GetCurrentThreadId(), findWindow, reinterpret_cast<LPARAM>(&hwnd));
+        if (!hwnd || hwnd == g_hwnd) return;
+
+        DragAcceptFiles(hwnd, TRUE);
+        auto prev = reinterpret_cast<WNDPROC>(
+            SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&wndProc)));
+        if (!prev) {
+            log::error("Drag & drop: failed to hook the game window ({})", GetLastError());
+            return;
+        }
+        g_prevProc = prev;
+        g_hwnd = hwnd;
+        log::info("Drag & drop of death sounds enabled");
+    }
+}
+
+class $modify(NoclipDeathSoundML, MenuLayer) {
+    bool init() {
+        if (!MenuLayer::init()) return false;
+        queueInMainThread([] { drop::install(); });
+        return true;
+    }
+};
 
 // ---------------------------------------------------------------------------
 // Noclip "death" detection
@@ -173,14 +326,20 @@ static void setupMegaHackTab() {
         .spinner("COOLDOWN", "Cooldown (sec)", cfg::cooldown(), {.min = 0.0, .max = 5.0, .step = 0.05}, toSetting("cooldown"))
         .checkbox("PLAYER_1", "Player 1", cfg::player1(), toSetting("player-1"))
         .checkbox("PLAYER_2", "Player 2", cfg::player2(), toSetting("player-2"))
-        .textbox("SOUND_PATH", "Sound File (empty = default)",
+        .textbox("SOUND_PATH", "Sound File (or drag a file into the game)",
                  utils::string::pathToString(cfg::soundFile()),
                  [mod](std::string const& value) {
                      if (syncing) return;
-                     mod->setSettingValue<std::filesystem::path>("sound-file", std::filesystem::path(value));
+                     mod->setSettingValue<std::filesystem::path>("sound-file", pathFromUtf8(value));
                      sound::release();
                  })
         .button("TEST", "Test Sound", [] { sound::play(); })
+        .button("RESET_SOUND", "Reset to Default Sound", [] {
+            cfg::setSoundFile({});
+            sound::release();
+            tab.set("SOUND_PATH", std::string());
+            drop::notify("Death sound: default", NotificationIcon::Info);
+        })
         .button("SETTINGS", "Open Geode Settings (file picker)", [] { openSettingsPopup(Mod::get()); })
         // When the menu opens, pull the current Geode settings into the tab
         .onOpen([] {
@@ -204,7 +363,7 @@ static void setupMegaHackTab() {
             mod->setSettingValue<bool>("player-2", tab.get<bool>("PLAYER_2"));
             auto path = tab.get<std::string>("SOUND_PATH");
             if (path != utils::string::pathToString(cfg::soundFile())) {
-                mod->setSettingValue<std::filesystem::path>("sound-file", std::filesystem::path(path));
+                mod->setSettingValue<std::filesystem::path>("sound-file", pathFromUtf8(path));
                 sound::release();
             }
         });

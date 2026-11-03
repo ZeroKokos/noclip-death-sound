@@ -5,7 +5,7 @@
 	},
 	"id": "vasyaodnokl.noclip-death-sound",
 	"name": "Noclip Death Sound",
-	"version": "v1.0.0",
+	"version": "v1.1.0",
 	"developer": "vasyaodnokl",
 	"description": "Mega Hack v9 addon: plays a death sound when you 'die' with noclip on.",
 	"dependencies": {
@@ -25,20 +25,29 @@
 			"description": "Play a sound every time you hit a hazard while noclip keeps you alive.",
 			"default": true
 		},
+		"drag-drop": {
+			"type": "bool",
+			"name": "Drag & Drop Sounds",
+			"description": "Drag any audio file (mp3, ogg, wav, flac...) onto the game window to make it the death sound.",
+			"default": true
+		},
 		"sound-file": {
 			"type": "file",
 			"name": "Sound File",
-			"description": "Sound to play (.ogg / .mp3 / .wav). If the file is missing, the standard GD death sound (explode_11.ogg) is used.",
-			"default": "{gd_dir}/Resources/explode_11.ogg",
+			"description": "Sound to play. Easiest way: drag an audio file onto the game window. Empty = the standard GD death sound (explode_11.ogg).",
+			"default": "",
 			"control": {
 				"dialog": "open",
 				"filters": [
 					{
 						"files": [
-							"*.ogg",
 							"*.mp3",
+							"*.ogg",
 							"*.wav",
-							"*.flac"
+							"*.flac",
+							"*.aiff",
+							"*.wma",
+							"*.opus"
 						],
 						"description": "Audio files"
 					}
