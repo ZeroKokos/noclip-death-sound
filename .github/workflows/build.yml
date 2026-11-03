@@ -6,6 +6,9 @@ on:
     branches:
       - "**"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Windows
@@ -24,3 +27,11 @@ jobs:
         with:
           name: NoclipDeathSound
           path: ${{ steps.build.outputs.build-output }}
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Noclip Death Sound
+          make_latest: true
+          files: ${{ steps.build.outputs.build-output }}/*.geode
