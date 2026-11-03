@@ -1,0 +1,101 @@
+{
+	"geode": "5.6.1",
+	"gd": {
+		"win": "2.2081"
+	},
+	"id": "vasyaodnokl.noclip-death-sound",
+	"name": "Noclip Death Sound",
+	"version": "v1.0.0",
+	"developer": "vasyaodnokl",
+	"description": "Mega Hack v9 addon: plays a death sound when you 'die' with noclip on.",
+	"dependencies": {
+		"absolllute.megahack": {
+			"version": ">=9.0.0",
+			"required": false
+		}
+	},
+	"tags": [
+		"utility",
+		"enhancement"
+	],
+	"settings": {
+		"enabled": {
+			"type": "bool",
+			"name": "Enable Death Sound",
+			"description": "Play a sound every time you hit a hazard while noclip keeps you alive.",
+			"default": true
+		},
+		"sound-file": {
+			"type": "file",
+			"name": "Sound File",
+			"description": "Sound to play (.ogg / .mp3 / .wav). If the file is missing, the standard GD death sound (explode_11.ogg) is used.",
+			"default": "{gd_dir}/Resources/explode_11.ogg",
+			"control": {
+				"dialog": "open",
+				"filters": [
+					{
+						"files": [
+							"*.ogg",
+							"*.mp3",
+							"*.wav",
+							"*.flac"
+						],
+						"description": "Audio files"
+					}
+				]
+			}
+		},
+		"volume": {
+			"type": "float",
+			"name": "Volume",
+			"default": 1.0,
+			"min": 0.0,
+			"max": 2.0,
+			"control": {
+				"slider": true,
+				"slider-step": 0.05,
+				"input": true
+			}
+		},
+		"respect-sfx-volume": {
+			"type": "bool",
+			"name": "Use Game SFX Volume",
+			"description": "Multiply the volume by the in-game SFX slider.",
+			"default": true
+		},
+		"cooldown": {
+			"type": "float",
+			"name": "Cooldown (seconds)",
+			"description": "Minimum time between two death sounds.",
+			"default": 0.1,
+			"min": 0.0,
+			"max": 5.0,
+			"control": {
+				"slider": true,
+				"slider-step": 0.05,
+				"input": true
+			}
+		},
+		"contact-gap": {
+			"type": "float",
+			"name": "Contact Gap (seconds)",
+			"description": "Hazard contacts closer together than this are treated as one 'death'. Leave default unless sounds double up or get skipped.",
+			"default": 0.05,
+			"min": 0.005,
+			"max": 1.0,
+			"control": {
+				"input": true
+			}
+		},
+		"player-1": {
+			"type": "bool",
+			"name": "Player 1",
+			"default": true
+		},
+		"player-2": {
+			"type": "bool",
+			"name": "Player 2 (dual mode)",
+			"default": true
+		}
+	}
+}
